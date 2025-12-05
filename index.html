@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Humppaa tai Kuole: Viimeinen Eläkepäivä</title>
+    <style>
+        body {
+            background-color: #1a1a1a;
+            color: #33ff33;
+            font-family: 'Courier New', Courier, monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        #game-container {
+            width: 100%;
+            max-width: 800px;
+            background-color: #000;
+            border: 2px solid #33ff33;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            height: 80vh;
+            box-shadow: 0 0 10px rgba(51, 255, 51, 0.5);
+        }
+        #header {
+            text-align: center;
+            border-bottom: 1px solid #33ff33;
+            margin-bottom: 10px;
+            padding-bottom: 10px;
+        }
+        h1 {
+            font-size: 1.5em;
+            margin: 0;
+            text-transform: uppercase;
+            text-shadow: 2px 2px #003300;
+        }
+        #stats {
+            display: flex;
+            justify-content: space-around;
+            margin-bottom: 10px;
+            font-weight: bold;
+            color: #ff3333;
+        }
+        #output {
+            flex-grow: 1;
+            overflow-y: auto;
+            margin-bottom: 10px;
+            white-space: pre-wrap;
+            line-height: 1.4;
+            padding-right: 10px;
+        }
+        #input-area {
+            display: flex;
+            border-top: 1px solid #33ff33;
+            padding-top: 10px;
+        }
+        #command-input {
+            flex-grow: 1;
+            background-color: #000;
+            color: #33ff33;
+            border: none;
+            font-family: 'Courier New', Courier, monospace;
+            font-size: 1.1em;
+            outline: none;
+        }
+        #send-btn {
+            background-color: #33ff33;
+            color: #000;
+            border: none;
+            padding: 5px 15px;
+            font-weight: bold;
+            cursor: pointer;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        #send-btn:hover {
+            background-color: #22cc22;
+        }
+        .message { margin-bottom: 15px; }
+        .message.system { color: #ffff33; }
+        .message.error { color: #ff3333; }
+        .message.success { color: #33ff33; }
+        
+        /* Scrollbar styling */
+        ::-webkit-scrollbar { width: 10px; }
+        ::-webkit-scrollbar-track { background: #000; }
+        ::-webkit-scrollbar-thumb { background: #333; border: 1px solid #33ff33; }
+        ::-webkit-scrollbar-thumb:hover { background: #33ff33; }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <div id="header">
+        <h1>Humppaa tai Kuole: Viimeinen Eläkepäivä</h1>
+    </div>
+    <div id="stats">
+        <span id="health-display">Humppakunto: 100%</span>
+        <span id="drunk-display">Humalatila: 0%</span>
+        <span id="money-display">Rahat: 0€</span>
+    </div>
+    <div id="output"></div>
+    <div id="input-area">
+        <span>&gt;&nbsp;</span>
+        <input type="text" id="command-input" autofocus placeholder="Mitä teet? (esim. KATSO, MENEE ETELÄÄN, OTA PULLO)" autocomplete="off">
+        <button id="send-btn">HUMPPAA</button>
+    </div>
+</div>
+
+<script>
+    // --- Game State ---
+    const state = {
+        currentLocation: 'sohva',
+        inventory: [],
+        stats: {
+            health: 100, // Humppakunto
+            drunk: 0,    // Humalatila
+            money: 0     // Rahat
+        },
+        flags: {
+            pensionReceived: false,
+            hasKicksled: false,
+            taxiCalled: false
+        },
+        gameOver: false
+    };
+
+    // --- Game Data ---
+    const locations = {
+        'sohva': {
+            name: 'Kotisohva',
+            description: 'Olet kotona rötväämässä. Sohva on mukava, mutta eläke polttelee taskussa (tai siis Kelassa). Olohuoneessa haisee vanha viina ja mäntysuopa. Eteisessä näkyy potkukelkka. Ulko-ovi on pohjoisessa.',
+            exits: { 'pohjoinen': 'piha' },
+            items: ['kaukosäädin']
+        },
+        'piha': {
+            name: 'Kotipiha',
+            description: 'Seisot lumihangessa. Pakkanen puree, mutta humppa lämmittää mieltä. Talon seinustalla on vanha potkukelkka, joka näyttää siltä että jalakset ovat nähneet parempiakin päiviä. Katu vie etelään keskustaa kohti.',
+            exits: { 'etelä': 'sohva', 'pohjoinen': 'katu' },
+            items: ['potkukelkka']
+        },
+        'katu': {
+            name: 'Kylänraitti',
+            description: 'Olet kylänraitilla. Tuuli tuivertaa. Lännessä siintää Kela, idässä Alko. Pohjoisessa näkyy Lavatanssien valot. Tämä on vaarallista seutua ilman humppaa.',
+            exits: { 'etelä': 'piha', 'länsi': 'kela', 'itä': 'alko', 'pohjoinen': 'lavatanssit' },
+            items: []
+        },
+        'kela': {
+            name: 'Kela',
+            description: 'Kelan virasto. Jonotusnumeroautomaatti on rikki.virkailija tuijottaa lasin takaa tyhjyyteen. Täältä pitäisi saada eläke.',
+            exits: { 'itä': 'katu' },
+            items: [],
+            action: function() {
+                if (!state.flags.pensionReceived) {
+                    print("Virkailija huokaa ja ojentaa nipun seteleitä. 'Tässä tämä, älä juo kaikkea kerralla.' (Sait 500€)");
+                    state.stats.money += 500;
+                    state.flags.pensionReceived = true;
+                    updateStats();
+                    return true;
+                } else {
+                    print("Virkailija sanoo: 'Sait jo rahasi, mene pois häiritsemästä.'");
+                }
+            }
+        },
+        'alko': {
+            name: 'Alko',
+            description: 'Paratiisin portit. Hyllyt notkuvat kirkkaita. Täältä saa elämänelyksiiriä.',
+            exits: { 'länsi': 'katu' },
+            items: ['koskenkorva', 'jaloviina'],
+            prices: { 'koskenkorva': 15, 'jaloviina': 20 }
+        },
+        'lavatanssit': {
+            name: 'Lavatanssit',
+            description: 'Matkan päätepiste! Humppa raikaa ja kansa karkeloi. Mutta pääsetkö sisään?',
+            exits: { 'etelä': 'katu' },
+            items: []
+        }
+    };
+
+    const items = {
+        'kaukosäädin': { description: 'Vanha ja tahmea kaukosäädin. Ei toimi.' },
+        'potkukelkka': { description: 'Ujas menopeli. Vähän ruosteessa.' },
+        'koskenkorva': { description: 'Perinteinen kirkas. Parantaa humalatilaa.', effect: 'drink', value: 30, cost: 15 },
+        'jaloviina': { description: 'Yhden tähden jallu. Aatelisten juomaa.', effect: 'drink', value: 40, cost: 20 },
+        'hanuri': { description: 'Harmaa ja äänekäs. Pelastaa tilanteita.' }
+    };
+
+    // --- Engine ---
+
+    const outputDiv = document.getElementById('output');
+    const inputField = document.getElementById('command-input');
+    const sendBtn = document.getElementById('send-btn');
+    const healthDisplay = document.getElementById('health-display');
+    const drunkDisplay = document.getElementById('drunk-display');
+    const moneyDisplay = document.getElementById('money-display');
+
+    function print(text, type = 'message') {
+        const p = document.createElement('div');
+        p.className = `message ${type}`;
+        p.textContent = text;
+        outputDiv.appendChild(p);
+        outputDiv.scrollTop = outputDiv.scrollHeight;
+    }
+
+    function updateStats() {
+        healthDisplay.textContent = `Humppakunto: ${state.stats.health}%`;
+        drunkDisplay.textContent = `Humalatila: ${state.stats.drunk}%`;
+        moneyDisplay.textContent = `Rahat: ${state.stats.money}€`;
+
+        // Check death conditions
+        if (state.stats.health <= 0) {
+            die("Humppakuntosi petti! Sydän lakkasi lyömästä tasatahtiin. Peli ohi.");
+        }
+        if (state.stats.drunk >= 100) {
+            die("Sammut lumihankeen. Peli ohi.");
+        }
+    }
+
+    function die(reason) {
+        state.gameOver = true;
+        print(reason, 'error');
+        print("Päivitä sivu aloittaaksesi alusta.", 'system');
+        inputField.disabled = true;
+        sendBtn.disabled = true;
+    }
+
+    function win() {
+        state.gameOver = true;
+        print("ONNEKSI OLKOON! Pääsit lavatansseihin, humppa raikaa ja kurkku on kostea. Eläkepäivät ovat pelastetut! Elät humpalla!", 'success');
+        inputField.disabled = true;
+        sendBtn.disabled = true;
+    }
+
+    function processCommand(cmd) {
+        if (state.gameOver) return;
+
+        const parts = cmd.toLowerCase().trim().split(' ');
+        const verb = parts[0];
+        const noun = parts.slice(1).join(' ');
+
+        print(`> ${cmd}`, 'system');
+
+        // Movement
+        if (['pohjoinen', 'etelä', 'itä', 'länsi'].includes(verb) || (verb === 'mene' && ['pohjoinen', 'etelä', 'itä', 'länsi'].includes(noun))) {
+            const dir = verb === 'mene' ? noun : verb;
+            const currentLoc = locations[state.currentLocation];
+            
+            if (currentLoc.exits[dir]) {
+                const destination = currentLoc.exits[dir];
+                
+                // Location blockers
+                if (destination === 'lavatanssit') {
+                    if (state.stats.drunk < 20) {
+                        print("Portimikko pysäyttää sinut: 'Liian selvä humppaan. Käy Alkossa ensin.'");
+                        return;
+                    }
+                    if (!state.flags.hasKicksled && state.stats.drunk > 50) {
+                         print("Olet liian kännissä kävelemään. Tarvitset menopelin.");
+                         return;
+                    }
+                    state.currentLocation = destination;
+                    look();
+                    win();
+                    return;
+                }
+                
+                // Travelling costs time/health
+                state.currentLocation = destination;
+                state.stats.health -= 2;
+                state.stats.drunk = Math.max(0, state.stats.drunk - 5);
+                
+                print(`Rämmit suuntaan ${dir}...`);
+                look();
+                updateStats();
+            } else {
+                print("Et voi mennä sinne.");
+            }
+        }
+        // Look
+        else if (verb === 'katso') {
+            look();
+        }
+        // Take
+        else if (verb === 'ota') {
+            const loc = locations[state.currentLocation];
+            if (noun === 'rahat' && state.currentLocation === 'kela') {
+                loc.action();
+                return;
+            }
+            
+            const itemIndex = loc.items.indexOf(noun);
+            if (itemIndex > -1) {
+                // Cost for Alko items
+                if (loc.prices && loc.prices[noun]) {
+                    if (state.stats.money >= loc.prices[noun]) {
+                        state.stats.money -= loc.prices[noun];
+                        print(`Ostit tuotteen ${noun}.`);
+                    } else {
+                        print("Ei ole tarpeeksi rahaa!");
+                        return;
+                    }
+                } else {
+                     print(`Otit esineen: ${noun}.`);
+                }
+                
+                state.inventory.push(noun);
+                if (!loc.prices) { // Remove free items from world, shop items stay
+                    loc.items.splice(itemIndex, 1); 
+                }
+                
+                if (noun === 'potkukelkka') state.flags.hasKicksled = true;
+                updateStats();
+            } else {
+                print("Täällä ei ole sellaista.");
+            }
+        }
+        // Inventory
+        else if (verb === 'tavarat' || verb === 'reppu') {
+            if (state.inventory.length === 0) {
+                print("Sinulla ei ole mitään.");
+            } else {
+                print("Sinulla on: " + state.inventory.join(', '));
+            }
+        }
+        // Use/Drink
+        else if (verb === 'juo' || verb === 'käytä') {
+            if (state.inventory.includes(noun)) {
+                 const itemData = items[noun];
+                 if (itemData && itemData.effect === 'drink') {
+                     print(`Loistava valinta. Kumoat pullon ${noun} kurkkuusi.`);
+                     state.stats.drunk += itemData.value;
+                     state.stats.health += 5;
+                     // Consumption logic: remove one instance
+                     const idx = state.inventory.indexOf(noun);
+                     state.inventory.splice(idx, 1);
+                     updateStats();
+                 } else {
+                     print("Ei sitä voi juoda tai käyttää järkevästi.");
+                 }
+            } else {
+                print("Sinulla ei ole tuota.");
+            }
+        }
+        // Help
+        else if (verb === 'apua' || verb === '?') {
+            print("Komennot: POHJOINEN/ETELÄ..., KATSO, OTA [ESINE], JUO [ESINE], TAVARAT.");
+        }
+        else {
+            print("En ymmärrä. Yritä selkeämmin, olet humalassa.");
+        }
+    }
+
+    function look() {
+        const loc = locations[state.currentLocation];
+        print(`\n--- ${loc.name} ---`, 'system');
+        print(loc.description);
+        if (loc.items && loc.items.length > 0) {
+            print("Näet täällä: " + loc.items.join(', '));
+        }
+    }
+
+    // --- Init ---
+    inputField.addEventListener('keypress', function (e) {
+        if (e.key === 'Enter') {
+            processCommand(inputField.value);
+            inputField.value = '';
+        }
+    });
+
+    sendBtn.addEventListener('click', function () {
+        processCommand(inputField.value);
+        inputField.value = '';
+    });
+
+    // Start game
+    print("Tervetuloa peliin HUMPPPAA TAI KUOLE: VIIMEINEN ELÄKEPÄIVÄ.", 'system');
+    print("Eläke on saatava, Alkoon on päästävä ja lavatanssit odottavat.");
+    print("Kirjoita 'APUA' saadaksesi ohjeita.");
+    look();
+    updateStats();
+
+</script>
+
+</body>
+</html>
